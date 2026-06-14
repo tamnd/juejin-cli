@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"github.com/charmbracelet/fang"
-	"github.com/tamnd/juejin-cli-cli/cli"
+	"github.com/tamnd/juejin-cli/cli"
 )
 
 func main() {
