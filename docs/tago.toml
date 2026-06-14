@@ -1,0 +1,10 @@
+title       = "juejin"
+baseURL     = "https://juejin-cli-cli.tamnd.com/"
+description = "Browse Juejin developer articles (掘金)"
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/juejin-cli-cli"
