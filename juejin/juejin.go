@@ -163,6 +163,45 @@ func (c *Client) do(ctx context.Context, url string, body []byte) ([]byte, bool,
 	return b, false, nil
 }
 
+// Search fetches articles matching keywords from the Juejin search API.
+//
+// cursor is the pagination cursor; use "0" for the first page.
+// limit is the maximum number of results to return.
+func (c *Client) Search(ctx context.Context, keywords string, cursor string, limit int) ([]SearchResult, error) {
+	url := c.cfg.BaseURL + "/search_api/v1/search"
+	bodyMap := map[string]any{
+		"keywords":    keywords,
+		"search_type": 0,
+		"sort_type":   0,
+		"cursor":      cursor,
+		"limit":       limit,
+	}
+
+	bodyBytes, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, err
+	}
+
+	raw, err := c.post(ctx, url, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp wireSearchResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("decode search: %w", err)
+	}
+	if resp.ErrNo != 0 {
+		return nil, fmt.Errorf("juejin api error %d: %s", resp.ErrNo, resp.ErrMsg)
+	}
+
+	out := make([]SearchResult, 0, len(resp.Data.Items))
+	for i, item := range resp.Data.Items {
+		out = append(out, wireSearchModelToResult(item.ResultModel, i+1, keywords))
+	}
+	return out, nil
+}
+
 func (c *Client) pace() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

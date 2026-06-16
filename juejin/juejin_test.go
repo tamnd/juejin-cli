@@ -251,3 +251,190 @@ func TestFeedAPIError(t *testing.T) {
 		t.Errorf("error = %v, want 403", err)
 	}
 }
+
+// --- Search tests ---
+
+const mockSearchResponse = `{
+  "err_no": 0,
+  "err_msg": "success",
+  "data": {
+    "count": 2,
+    "has_more": false,
+    "cursor": "2",
+    "items": [
+      {
+        "result_model": {
+          "article_id": "7111111111111111111",
+          "article_info": {
+            "title": "Go 并发模式详解",
+            "brief_content": "详细介绍 Go 语言的并发模型",
+            "view_count": 8000,
+            "digg_count": 350,
+            "comment_count": 60,
+            "collect_count": 120
+          },
+          "author_user_info": {
+            "user_name": "gopherdev",
+            "user_id": "uid999"
+          },
+          "tags": [
+            {"tag_name": "Go"},
+            {"tag_name": "并发"},
+            {"tag_name": "goroutine"},
+            {"tag_name": "extra"}
+          ],
+          "category": {
+            "category_name": "后端"
+          }
+        }
+      },
+      {
+        "result_model": {
+          "article_id": "7222222222222222222",
+          "article_info": {
+            "title": "Go channel 使用指南",
+            "brief_content": "channel 的正确使用方式",
+            "view_count": 4000,
+            "digg_count": 150,
+            "comment_count": 30,
+            "collect_count": 60
+          },
+          "author_user_info": {
+            "user_name": "chandev",
+            "user_id": "uid888"
+          },
+          "tags": [
+            {"tag_name": "Go"},
+            {"tag_name": "channel"}
+          ],
+          "category": {
+            "category_name": "后端"
+          }
+        }
+      }
+    ]
+  }
+}`
+
+const mockSearchErrorResponse = `{"err_no":403,"err_msg":"permission denied","data":{"count":0,"has_more":false,"cursor":"0","items":[]}}`
+
+const mockSearchEmptyResponse = `{"err_no":0,"err_msg":"success","data":{"count":0,"has_more":false,"cursor":"0","items":[]}}`
+
+func TestSearchUsesSearchEndpoint(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(mockSearchResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	_, err := c.Search(context.Background(), "go", "0", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/search_api/v1/search" {
+		t.Errorf("path = %q, want /search_api/v1/search", gotPath)
+	}
+}
+
+func TestSearchSendsKeywords(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		_, _ = w.Write([]byte(mockSearchResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	_, err := c.Search(context.Background(), "go concurrency", "0", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["keywords"] != "go concurrency" {
+		t.Errorf("keywords = %v, want 'go concurrency'", gotBody["keywords"])
+	}
+}
+
+func TestSearchParsesResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(mockSearchResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	results, err := c.Search(context.Background(), "go", "0", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+
+	r := results[0]
+	if r.Rank != 1 {
+		t.Errorf("rank = %d, want 1", r.Rank)
+	}
+	if r.Title != "Go 并发模式详解" {
+		t.Errorf("title = %q", r.Title)
+	}
+	if r.Author != "gopherdev" {
+		t.Errorf("author = %q, want gopherdev", r.Author)
+	}
+	if r.Category != "后端" {
+		t.Errorf("category = %q, want 后端", r.Category)
+	}
+	if r.Views != 8000 {
+		t.Errorf("views = %d, want 8000", r.Views)
+	}
+	if r.Diggs != 350 {
+		t.Errorf("diggs = %d, want 350", r.Diggs)
+	}
+	if r.URL != "https://juejin.cn/post/7111111111111111111" {
+		t.Errorf("url = %q", r.URL)
+	}
+	if r.Query != "go" {
+		t.Errorf("query = %q, want 'go'", r.Query)
+	}
+	// tags capped at 3
+	if strings.Contains(r.Tags, "extra") {
+		t.Errorf("tags should be capped at 3, got %q", r.Tags)
+	}
+	expected := "Go, 并发, goroutine"
+	if r.Tags != expected {
+		t.Errorf("tags = %q, want %q", r.Tags, expected)
+	}
+}
+
+func TestSearchAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(mockSearchErrorResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	_, err := c.Search(context.Background(), "go", "0", 5)
+	if err == nil {
+		t.Fatal("expected error from api err_no, got nil")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("error = %v, want 403", err)
+	}
+}
+
+func TestSearchEmptyResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(mockSearchEmptyResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	results, err := c.Search(context.Background(), "xyznonexistent", "0", 5)
+	if err != nil {
+		t.Fatalf("expected no error on empty results, got %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("got %d results, want 0", len(results))
+	}
+}
