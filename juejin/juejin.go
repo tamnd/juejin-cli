@@ -111,6 +111,115 @@ func (c *Client) Feed(ctx context.Context, sortType int, categoryID string, curs
 	return out, nil
 }
 
+// User fetches the public profile for the given Juejin user ID.
+func (c *Client) User(ctx context.Context, userID string) (*UserProfile, error) {
+	endpoint := c.cfg.BaseURL + "/api/v1/user_api/v1/user"
+	bodyMap := map[string]any{"user_id": userID}
+	bodyBytes, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.post(ctx, endpoint, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	var resp wireObjectResponse[wireUserData]
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("decode user: %w", err)
+	}
+	if resp.ErrNo != 0 {
+		return nil, fmt.Errorf("juejin api error %d: %s", resp.ErrNo, resp.ErrMsg)
+	}
+	d := resp.Data
+	return &UserProfile{
+		ID:            d.UserID,
+		Name:          d.UserName,
+		Description:   d.Description,
+		Avatar:        d.AvatarLarge,
+		Company:       d.Company,
+		JobTitle:      d.JobTitle,
+		Level:         d.Level,
+		GotDiggs:      d.GotDiggCount,
+		GotViews:      d.GotViewCount,
+		ArticleCount:  d.ArticleCount,
+		FollowCount:   d.FollowCount,
+		FollowerCount: d.FollowerCount,
+		URL:           "https://juejin.cn/user/" + d.UserID,
+	}, nil
+}
+
+// Tags fetches the tag list from Juejin.
+// cursor is the pagination cursor ("0" for first page), limit is how many to fetch.
+func (c *Client) Tags(ctx context.Context, cursor string, limit int) ([]Tag, error) {
+	endpoint := c.cfg.BaseURL + "/api/v1/tag_api/v1/query_tag_list"
+	bodyMap := map[string]any{"cursor": cursor, "limit": limit}
+	bodyBytes, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.post(ctx, endpoint, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	var resp wireTagListResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("decode tags: %w", err)
+	}
+	if resp.ErrNo != 0 {
+		return nil, fmt.Errorf("juejin api error %d: %s", resp.ErrNo, resp.ErrMsg)
+	}
+	out := make([]Tag, 0, len(resp.Data))
+	for i, t := range resp.Data {
+		out = append(out, Tag{
+			Rank:         i + 1,
+			ID:           t.TagID,
+			Name:         t.TagName,
+			Icon:         t.Icon,
+			FollowCount:  t.FollowCount,
+			ArticleCount: t.ArticleCount,
+			URL:          "https://juejin.cn/tag/" + t.TagName,
+		})
+	}
+	return out, nil
+}
+
+// Pins fetches public pin/moment (沸点) items from Juejin.
+// cursor is the pagination cursor ("0" for first page), limit is how many to fetch.
+func (c *Client) Pins(ctx context.Context, cursor string, limit int) ([]Pin, error) {
+	endpoint := c.cfg.BaseURL + "/api/v1/short_msg/v1/query_message_list"
+	bodyMap := map[string]any{"cursor": cursor, "limit": limit, "sort_type": 200}
+	bodyBytes, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.post(ctx, endpoint, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	var resp wirePinListResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("decode pins: %w", err)
+	}
+	if resp.ErrNo != 0 {
+		return nil, fmt.Errorf("juejin api error %d: %s", resp.ErrNo, resp.ErrMsg)
+	}
+	out := make([]Pin, 0, len(resp.Data))
+	for i, p := range resp.Data {
+		out = append(out, Pin{
+			Rank:         i + 1,
+			ID:           p.MsgID,
+			Content:      p.Content,
+			Author:       p.UserInfo.UserName,
+			AuthorID:     p.UserInfo.UserID,
+			DiggCount:    p.DiggCount,
+			CommentCount: p.CommentCount,
+			CreatedAt:    p.Ctime,
+			URL:          "https://juejin.cn/pin/" + p.MsgID,
+		})
+	}
+	return out, nil
+}
+
 func (c *Client) post(ctx context.Context, url string, body []byte) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.Retries; attempt++ {

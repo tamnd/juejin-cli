@@ -251,3 +251,202 @@ func TestFeedAPIError(t *testing.T) {
 		t.Errorf("error = %v, want 403", err)
 	}
 }
+
+// ─── User tests ───────────────────────────────────────────────────────────────
+
+const mockUserResponse = `{
+  "err_no": 0,
+  "err_msg": "success",
+  "data": {
+    "user_id": "123456",
+    "user_name": "gopher42",
+    "description": "Go enthusiast",
+    "avatar_large": "https://example.com/avatar.jpg",
+    "company": "ACME",
+    "job_title": "Engineer",
+    "level": 3,
+    "got_digg_count": 1000,
+    "got_view_count": 50000,
+    "article_count": 42,
+    "follow_count": 100,
+    "follower_count": 500
+  }
+}`
+
+func TestUserParsesProfile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
+		if body["user_id"] != "123456" {
+			t.Errorf("user_id = %v, want 123456", body["user_id"])
+		}
+		_, _ = w.Write([]byte(mockUserResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	profile, err := c.User(context.Background(), "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.ID != "123456" {
+		t.Errorf("id = %q, want 123456", profile.ID)
+	}
+	if profile.Name != "gopher42" {
+		t.Errorf("name = %q, want gopher42", profile.Name)
+	}
+	if profile.ArticleCount != 42 {
+		t.Errorf("article_count = %d, want 42", profile.ArticleCount)
+	}
+	if profile.FollowerCount != 500 {
+		t.Errorf("follower_count = %d, want 500", profile.FollowerCount)
+	}
+	if profile.URL != "https://juejin.cn/user/123456" {
+		t.Errorf("url = %q", profile.URL)
+	}
+}
+
+func TestUserAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"err_no":10003,"err_msg":"user not found","data":{}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	_, err := c.User(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "10003") {
+		t.Errorf("error = %v, want 10003", err)
+	}
+}
+
+// ─── Tags tests ───────────────────────────────────────────────────────────────
+
+const mockTagsResponse = `{
+  "err_no": 0,
+  "err_msg": "success",
+  "data": [
+    {"tag_id": "t001", "tag_name": "Go", "icon": "https://example.com/go.png", "follow_count": 50000, "article_count": 12000},
+    {"tag_id": "t002", "tag_name": "Rust", "icon": "https://example.com/rust.png", "follow_count": 30000, "article_count": 8000}
+  ]
+}`
+
+func TestTagsParsesResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(mockTagsResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	tags, err := c.Tags(context.Background(), "0", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("got %d tags, want 2", len(tags))
+	}
+	if tags[0].Name != "Go" {
+		t.Errorf("name = %q, want Go", tags[0].Name)
+	}
+	if tags[0].FollowCount != 50000 {
+		t.Errorf("follow_count = %d, want 50000", tags[0].FollowCount)
+	}
+	if tags[1].Rank != 2 {
+		t.Errorf("rank = %d, want 2", tags[1].Rank)
+	}
+	if tags[0].URL != "https://juejin.cn/tag/Go" {
+		t.Errorf("url = %q", tags[0].URL)
+	}
+}
+
+func TestTagsSendsCursorAndLimit(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		_, _ = w.Write([]byte(mockTagsResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	_, err := c.Tags(context.Background(), "20", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["cursor"] != "20" {
+		t.Errorf("cursor = %v, want 20", gotBody["cursor"])
+	}
+	if int(gotBody["limit"].(float64)) != 10 {
+		t.Errorf("limit = %v, want 10", gotBody["limit"])
+	}
+}
+
+// ─── Pins tests ───────────────────────────────────────────────────────────────
+
+const mockPinsResponse = `{
+  "err_no": 0,
+  "err_msg": "success",
+  "has_more": true,
+  "cursor": "20",
+  "data": [
+    {
+      "msg_id": "pin001",
+      "content": "Go 真的好用！",
+      "digg_count": 88,
+      "comment_count": 12,
+      "user_info": {"user_id": "uid001", "user_name": "gopher42"},
+      "ctime": "1700000000"
+    }
+  ]
+}`
+
+func TestPinsParsesResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(mockPinsResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	pins, err := c.Pins(context.Background(), "0", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pins) != 1 {
+		t.Fatalf("got %d pins, want 1", len(pins))
+	}
+	p := pins[0]
+	if p.ID != "pin001" {
+		t.Errorf("id = %q, want pin001", p.ID)
+	}
+	if p.Author != "gopher42" {
+		t.Errorf("author = %q, want gopher42", p.Author)
+	}
+	if p.DiggCount != 88 {
+		t.Errorf("digg_count = %d, want 88", p.DiggCount)
+	}
+	if p.URL != "https://juejin.cn/pin/pin001" {
+		t.Errorf("url = %q", p.URL)
+	}
+}
+
+func TestPinsSendsSortType(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		_, _ = w.Write([]byte(mockPinsResponse))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	_, err := c.Pins(context.Background(), "0", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int(gotBody["sort_type"].(float64)) != 200 {
+		t.Errorf("sort_type = %v, want 200", gotBody["sort_type"])
+	}
+}
