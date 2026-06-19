@@ -89,6 +89,9 @@ juejin is an independent tool and is not affiliated with Juejin.`,
 	root.AddCommand(
 		app.hotCmd(),
 		app.latestCmd(),
+		app.userCmd(),
+		app.tagsCmd(),
+		app.pinsCmd(),
 		newVersionCmd(),
 	)
 	return root
